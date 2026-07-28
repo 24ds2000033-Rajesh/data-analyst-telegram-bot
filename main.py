@@ -21,13 +21,16 @@ logger = logging.getLogger(__name__)
 # Configs
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 AI_PIPE_TOKEN = os.getenv("AI_PIPE_TOKEN")
-AI_PIPE_URL = os.getenv("AI_PIPE_URL", "https://api.aipipe.org/v1/chat/completions")
+# Fixed URL: changed api.aipipe.org -> aipipe.org
+AI_PIPE_URL = os.getenv("AI_PIPE_URL", "https://aipipe.org/openai/v1")
 PUBLIC_HOST_URL = os.getenv("PUBLIC_HOST_URL", "http://localhost:8000").rstrip("/")
 
-# Log Storage Setup
+# Log Storage Setup (Ensure file exists immediately on startup)
 LOG_DIR = Path("public")
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "run.jsonl"
+LOG_FILE.touch(exist_ok=True)
+
 
 def log_agent_run(user_message: str, parsed_answer: dict, raw_llm_response: str):
     """Appends execution details to run.jsonl for auditability."""
@@ -39,6 +42,7 @@ def log_agent_run(user_message: str, parsed_answer: dict, raw_llm_response: str)
     }
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
+
 
 def call_ai_pipe(message: str) -> str:
     """Calls AI Pipe Proxy API with systemic instructions for exact JSON outputs."""
@@ -67,6 +71,7 @@ def call_ai_pipe(message: str) -> str:
     response.raise_for_status()
     res_data = response.json()
     return res_data["choices"][0]["message"]["content"].strip()
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
@@ -110,7 +115,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         await update.message.reply_text(json.dumps(err_payload))
 
-# FastAPI Web Server for public JSONL serving and Telegram Polling Lifespan
+
+# Lifespan for managing Telegram Bot lifecycle alongside FastAPI
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start Telegram Bot Polling
@@ -128,7 +134,22 @@ async def lifespan(app: FastAPI):
     await telegram_app.updater.stop()
     await telegram_app.stop()
     await telegram_app.shutdown()
-    
+
+
+# Initialize FastAPI App
+app = FastAPI(lifespan=lifespan)
+
+
+# Health Check Root Endpoint
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Telegram Data Analyst Bot is running!"}
+
+
+# Mount Static Files directory for serving run.jsonl
+app.mount("/", StaticFiles(directory="public"), name="public")
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
