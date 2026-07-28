@@ -129,12 +129,6 @@ async def lifespan(app: FastAPI):
     await telegram_app.stop()
     await telegram_app.shutdown()
     
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Telegram Data Analyst Bot is running!"}
-app = FastAPI(lifespan=lifespan)
-app.mount("/", StaticFiles(directory="public", html=True), name="public")
-
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
