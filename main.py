@@ -47,6 +47,8 @@ def log_agent_run(user_message: str, parsed_answer: dict, raw_llm_response: str)
 # Add MODEL_NAME to your Configs section in main.py
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
 
+import time
+
 def call_ai_pipe(message: str) -> str:
     headers = {
         "Authorization": f"Bearer {AI_PIPE_TOKEN}",
@@ -61,7 +63,7 @@ def call_ai_pipe(message: str) -> str:
     )
 
     payload = {
-        "model": MODEL_NAME,  # Use the configurable model name variable
+        "model": "gpt-4o-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
@@ -69,10 +71,16 @@ def call_ai_pipe(message: str) -> str:
         "temperature": 0.0
     }
 
-    response = requests.post(AI_PIPE_URL, headers=headers, json=payload, timeout=60)
-    response.raise_for_status()
-    res_data = response.json()
-    return res_data["choices"][0]["message"]["content"].strip()
+    # Simple retry loop for 429 / rate limits
+    max_retries = 3
+    for attempt in range(max_retries):
+        response = requests.post(AI_PIPE_URL, headers=headers, json=payload, timeout=60)
+        if response.status_code == 429 and attempt < max_retries - 1:
+            time.sleep(2 ** attempt)  # Wait 1s, then 2s before retrying
+            continue
+        response.raise_for_status()
+        res_data = response.json()
+        return res_data["choices"][0]["message"]["content"].strip()
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
