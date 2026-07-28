@@ -93,24 +93,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Parse extracted answer schema
         parsed_answer = json.loads(clean_reply)
 
-        # Log details
+        # Log successful run
         log_agent_run(user_text, parsed_answer, raw_llm_reply)
 
-        # Formulate final response object
         final_payload = {
             "answer": parsed_answer,
             "log_url": f"{PUBLIC_HOST_URL}/run.jsonl"
         }
-
         await update.message.reply_text(json.dumps(final_payload))
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         logger.error(traceback.format_exc())
         
-        # Fallback response in case of parse errors
+        err_answer = {"error": str(e)}
+        
+        # Log failed run to run.jsonl so the file is not empty
+        log_agent_run(user_text, err_answer, f"Error: {str(e)}")
+
         err_payload = {
-            "answer": {"error": str(e)},
+            "answer": err_answer,
             "log_url": f"{PUBLIC_HOST_URL}/run.jsonl"
         }
         await update.message.reply_text(json.dumps(err_payload))
