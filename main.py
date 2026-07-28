@@ -1,0 +1,138 @@
+import os
+import json
+import logging
+import asyncio
+import traceback
+import requests
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from pathlib import Path
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Setup Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configs
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+AI_PIPE_TOKEN = os.getenv("AI_PIPE_TOKEN")
+AI_PIPE_URL = os.getenv("AI_PIPE_URL", "https://api.aipipe.org/v1/chat/completions")
+PUBLIC_HOST_URL = os.getenv("PUBLIC_HOST_URL", "http://localhost:8000").rstrip("/")
+
+# Log Storage Setup
+LOG_DIR = Path("public")
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "run.jsonl"
+
+def log_agent_run(user_message: str, parsed_answer: dict, raw_llm_response: str):
+    """Appends execution details to run.jsonl for auditability."""
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "input": user_message,
+        "llm_response": raw_llm_response,
+        "parsed_answer": parsed_answer
+    }
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+def call_ai_pipe(message: str) -> str:
+    """Calls AI Pipe Proxy API with systemic instructions for exact JSON outputs."""
+    headers = {
+        "Authorization": f"Bearer {AI_PIPE_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    system_prompt = (
+        "You are an expert Data Analyst LLM agent. "
+        "Analyze the input data/question carefully. Compute any statistics using precise python logical steps if needed. "
+        "Strict Rule: Always return ONLY valid JSON matching the requested payload format specified in the prompt. "
+        "No prose, no code blocks (```json), no explanations."
+    )
+
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message}
+        ],
+        "temperature": 0.0
+    }
+
+    response = requests.post(AI_PIPE_URL, headers=headers, json=payload, timeout=60)
+    response.raise_for_status()
+    res_data = response.json()
+    return res_data["choices"][0]["message"]["content"].strip()
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
+    user_text = update.message.text.strip()
+    logger.info(f"Received message: {user_text}")
+
+    try:
+        raw_llm_reply = call_ai_pipe(user_text)
+        
+        # Strip code block markers if present
+        clean_reply = raw_llm_reply
+        if clean_reply.startswith("```"):
+            clean_reply = clean_reply.split("\n", 1)[-1].rsplit("\n", 1)[0].strip()
+            if clean_reply.startswith("json"):
+                clean_reply = clean_reply[4:].strip()
+
+        # Parse extracted answer schema
+        parsed_answer = json.loads(clean_reply)
+
+        # Log details
+        log_agent_run(user_text, parsed_answer, raw_llm_reply)
+
+        # Formulate final response object
+        final_payload = {
+            "answer": parsed_answer,
+            "log_url": f"{PUBLIC_HOST_URL}/run.jsonl"
+        }
+
+        await update.message.reply_text(json.dumps(final_payload))
+
+    except Exception as e:
+        logger.error(f"Error processing message: {e}")
+        logger.error(traceback.format_exc())
+        
+        # Fallback response in case of parse errors
+        err_payload = {
+            "answer": {"error": str(e)},
+            "log_url": f"{PUBLIC_HOST_URL}/run.jsonl"
+        }
+        await update.message.reply_text(json.dumps(err_payload))
+
+# FastAPI Web Server for public JSONL serving and Telegram Polling Lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start Telegram Bot Polling
+    telegram_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+    logger.info("Telegram Bot polling started.")
+    
+    yield
+    
+    # Shutdown Telegram Bot
+    await telegram_app.updater.stop()
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/", StaticFiles(directory="public", html=True), name="public")
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
