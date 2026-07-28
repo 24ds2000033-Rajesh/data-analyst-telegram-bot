@@ -44,8 +44,10 @@ def log_agent_run(user_message: str, parsed_answer: dict, raw_llm_response: str)
         f.write(json.dumps(entry) + "\n")
 
 
+# Add MODEL_NAME to your Configs section in main.py
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o-mini")
+
 def call_ai_pipe(message: str) -> str:
-    """Calls AI Pipe Proxy API with systemic instructions for exact JSON outputs."""
     headers = {
         "Authorization": f"Bearer {AI_PIPE_TOKEN}",
         "Content-Type": "application/json"
@@ -53,13 +55,13 @@ def call_ai_pipe(message: str) -> str:
     
     system_prompt = (
         "You are an expert Data Analyst LLM agent. "
-        "Analyze the input data/question carefully. Compute any statistics using precise python logical steps if needed. "
+        "Analyze the input data/question carefully. "
         "Strict Rule: Always return ONLY valid JSON matching the requested payload format specified in the prompt. "
         "No prose, no code blocks (```json), no explanations."
     )
 
     payload = {
-        "model": "gpt-4o-mini",
+        "model": MODEL_NAME,  # Use the configurable model name variable
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
