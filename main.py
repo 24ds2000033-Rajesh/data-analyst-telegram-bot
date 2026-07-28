@@ -21,8 +21,10 @@ logger = logging.getLogger(__name__)
 # Configs
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 AI_PIPE_TOKEN = os.getenv("AI_PIPE_TOKEN")
-# Fixed URL: changed api.aipipe.org -> aipipe.org
-AI_PIPE_URL = os.getenv("AI_PIPE_URL", "https://aipipe.org/openai/v1")
+# OpenRouter completion endpoint
+AI_PIPE_URL = os.getenv("AI_PIPE_URL", "https://aipipe.org/openrouter/v1/chat/completions")
+# Default model as shown in AI Pipe docs
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-4.1-nano")
 PUBLIC_HOST_URL = os.getenv("PUBLIC_HOST_URL", "http://localhost:8000").rstrip("/")
 
 # Log Storage Setup (Ensure file exists immediately on startup)
@@ -63,7 +65,7 @@ def call_ai_pipe(message: str) -> str:
     )
 
     payload = {
-        "model": os.getenv("MODEL_NAME", "google/gemini-2.0-flash-lite-001"),
+        "model": MODEL_NAME,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
@@ -73,10 +75,9 @@ def call_ai_pipe(message: str) -> str:
 
     response = requests.post(AI_PIPE_URL, headers=headers, json=payload, timeout=60)
     
-    # Catch and detail any non-200 responses
+    # Check for HTTP error status
     if not response.ok:
-        logger.error(f"AI Pipe Error Response ({response.status_code}): {response.text}")
-        raise Exception(f"AI Pipe API Error ({response.status_code}): {response.text}")
+        raise Exception(f"AI Pipe Error {response.status_code}: {response.text}")
 
     res_data = response.json()
     return res_data["choices"][0]["message"]["content"].strip()
