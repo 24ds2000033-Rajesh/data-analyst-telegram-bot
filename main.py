@@ -63,7 +63,7 @@ def call_ai_pipe(message: str) -> str:
     )
 
     payload = {
-        "model": "gpt-4o-mini",
+        "model": os.getenv("MODEL_NAME", "google/gemini-2.0-flash-lite-001"),
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
@@ -71,16 +71,15 @@ def call_ai_pipe(message: str) -> str:
         "temperature": 0.0
     }
 
-    # Simple retry loop for 429 / rate limits
-    max_retries = 3
-    for attempt in range(max_retries):
-        response = requests.post(AI_PIPE_URL, headers=headers, json=payload, timeout=60)
-        if response.status_code == 429 and attempt < max_retries - 1:
-            time.sleep(2 ** attempt)  # Wait 1s, then 2s before retrying
-            continue
-        response.raise_for_status()
-        res_data = response.json()
-        return res_data["choices"][0]["message"]["content"].strip()
+    response = requests.post(AI_PIPE_URL, headers=headers, json=payload, timeout=60)
+    
+    # Catch and detail any non-200 responses
+    if not response.ok:
+        logger.error(f"AI Pipe Error Response ({response.status_code}): {response.text}")
+        raise Exception(f"AI Pipe API Error ({response.status_code}): {response.text}")
+
+    res_data = response.json()
+    return res_data["choices"][0]["message"]["content"].strip()
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
